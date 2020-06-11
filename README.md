@@ -32,4 +32,6 @@ accept SNS POST messages
     * Move notifications to queues so that they would be pulled instead of pushed
     * Save failed notifications to separate queue, implement retry policy
     * Use environment variables instead of hard coded constants.
+* Use aws lambda layers to reduce lambda deployment size
+* Migrate to gradle (Kotlin DSL FTW!)
 * And many more.
