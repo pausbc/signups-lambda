@@ -8,10 +8,9 @@ import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBScanExpression;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.LambdaLogger;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import com.google.gson.FieldNamingPolicy;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.pausub.challenge.signups.model.Greet;
+import com.amazonaws.services.lambda.runtime.events.SNSEvent;
+import com.google.gson.*;
+import com.pausub.challenge.signups.model.Greeting;
 import com.pausub.challenge.signups.model.User;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -27,22 +26,25 @@ import java.util.*;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.*;
 
-public class SignupRequestHandler implements RequestHandler<Map<String, String>, String> {
+public class SignupRequestHandler implements RequestHandler<SNSEvent, String> {
 
-    private static final String DATE_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS";
+    private static final String DATE_FORMAT = "yyyy-MM-dd'T'HH:mm:ss";
     private static final String SENDER_EMAIL = "pausub@gmail.com";
     private static final String GREET_MESSAGE = "Hi %s, welcome to komoot.";
     private static final String GREET_MESSAGE_TAIL = " %s also joined recently.";
-    private static final String PUSH_NOTIFICATION_ENDPOINT = "invalid"; //"https://notification-backend-challenge.main.komoot.net";
-    private static final int HTTP_REQUEST_RETRY_COUNT = 3;
 
+    // 10 seconds retry timeout for easier debug.
+    private static final int PUSH_NOTIFICATION_SERVICE_RETRY_TIMEOUT_MILLIS = 1000 * 10;
     private static final int USER_POOL_SIZE = 20;
     private static final int USERS_IN_GREET_COUNT = 3;
 
+    private static final String PUSH_NOTIFICATION_ENDPOINT = "https://notification-backend-challenge.main.komoot.net";
+    private static final int HTTP_REQUEST_RETRY_COUNT = 3;
+
     private static final Regions REGION = Regions.EU_WEST_1;
 
-    AmazonDynamoDB dynamoDBClient = AmazonDynamoDBClientBuilder.standard().withRegion(REGION).build();
-    DynamoDBMapper dynamoDBMapper = new DynamoDBMapper(dynamoDBClient);
+    private final AmazonDynamoDB dynamoDBClient = AmazonDynamoDBClientBuilder.standard().withRegion(REGION).build();
+    private final DynamoDBMapper dynamoDBMapper = new DynamoDBMapper(dynamoDBClient);
 
     private static final Gson gson = new GsonBuilder()
             .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
@@ -50,33 +52,36 @@ public class SignupRequestHandler implements RequestHandler<Map<String, String>,
             .setPrettyPrinting()
             .create();
 
-    public String handleRequest(Map<String,String> event, Context context) {
+    public String handleRequest(SNSEvent event, Context context) {
         LambdaLogger logger = context.getLogger();
-        String eventJson = gson.toJson(event);
-        logger.log("Event: " + eventJson);
-        User currentUser = gson.fromJson(eventJson, User.class);
+        logger.log("Event: " + event);
+        String message = event.getRecords().get(0).getSNS().getMessage(); // assume single record per event
 
-        validate(currentUser);
+        logger.log("Message json: " + message);
+        User user = gson.fromJson(message, User.class);
+
+        validate(user);
         List<User> userPool = loadOrderedUserPool();
         logger.log("Initial user pool: " + gson.toJson(userPool));
-        validateUserWithPool(currentUser, userPool);
-        updateAndPersistPool(currentUser, userPool, USER_POOL_SIZE);
+        validateUserWithPool(user, userPool);
 
-        Greet greet = createGreet(currentUser, findUsersForGreet(currentUser.getName(), userPool, USERS_IN_GREET_COUNT));
-        String greetJson = gson.toJson(greet);
+        updateAndPersistPool(user, userPool);
+
+        Greeting greeting = createGreet(user, findUsersForGreet(user.getName(), userPool, USERS_IN_GREET_COUNT));
+        String greetJson = gson.toJson(greeting);
         logger.log("Sending greet: " + greetJson);
-        logger.log("Greet response: " + gson.toJson(sendGreet(greetJson, logger).body()));
-
+        HttpResponse<String> greetResponse = sendGreet(greetJson, logger);
+        logger.log("Greet response: " + gson.toJson(greetResponse.body()));
         return greetJson;
     }
 
-    private HttpResponse sendGreet(String greetJson, LambdaLogger logger) {
+    private HttpResponse<String> sendGreet(String greetJson, LambdaLogger logger) {
         for (int i = 0; i < HTTP_REQUEST_RETRY_COUNT; i++) {
             try {
                 HttpClient client = HttpClient.newHttpClient();
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(PUSH_NOTIFICATION_ENDPOINT))
-                        .timeout(Duration.ofMinutes(1))
+                        .timeout(Duration.ofSeconds(30))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(greetJson))
                         .build();
@@ -84,6 +89,11 @@ public class SignupRequestHandler implements RequestHandler<Map<String, String>,
             } catch (IOException | InterruptedException e) {
                 logger.log("HTTP send greet failed with: " + e.getMessage());
                 logger.log(ExceptionUtils.getStackTrace(e));
+            }
+            try {
+                Thread.sleep(PUSH_NOTIFICATION_SERVICE_RETRY_TIMEOUT_MILLIS);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e.getMessage(), e);
             }
         }
         throw new RuntimeException(String.format("Failed to send notification after %d retries", USERS_IN_GREET_COUNT));
@@ -99,9 +109,9 @@ public class SignupRequestHandler implements RequestHandler<Map<String, String>,
     }
 
     // Assumes valid input
-    Greet createGreet(User user, List<User> usersForGreet) {
+    Greeting createGreet(User user, List<User> usersForGreet) {
         String greetMessage = createGreetMessage(user, usersForGreet.stream().map(User::getName).collect(toList()));
-        return Greet.builder()
+        return Greeting.builder()
                 .message(greetMessage)
                 .receiver(user.getId())
                 .recentUserIds(usersForGreet.stream().map(User::getId).collect(toList()))
@@ -125,16 +135,16 @@ public class SignupRequestHandler implements RequestHandler<Map<String, String>,
         }
     }
 
-    // If user already exists in pool - lambda should exit
+    // If user already exists in pool - notification should not be sent
     private void validateUserWithPool(User currentUser, List<User> userPool) {
-        boolean existsInPool = userPool.stream().anyMatch(user -> currentUser.getId().equals(user.getId()));
+        boolean existsInPool = userPool.stream().anyMatch(user -> currentUser.getId() == user.getId());
         if (existsInPool) {
             throw new IllegalStateException(String.format("User with id %s already exists", currentUser.getId()));
         }
     }
 
-    void updateAndPersistPool(User currentUser, List<User> initialUserPool, int userPoolSize) {
-        List<User> updatedPool = createUpdatedUserPool(currentUser, initialUserPool, userPoolSize);
+    void updateAndPersistPool(User currentUser, List<User> initialUserPool) {
+        List<User> updatedPool = createUpdatedUserPool(currentUser, initialUserPool, USER_POOL_SIZE);
         List<User> removedUsers = difference(initialUserPool, updatedPool);
         if (!removedUsers.isEmpty()) {
             dynamoDBMapper.batchDelete(removedUsers);
@@ -171,14 +181,8 @@ public class SignupRequestHandler implements RequestHandler<Map<String, String>,
     private void validate(User user) {
         requireNonNull(user, "User can not be null");
         requireNonNull(user.getCreatedAt(), "User createdAt date can not be null");
-        validateAllEmpty(user.getId(), "User id");
-        validateAllEmpty(user.getName(), "User name");
-    }
-
-    private void validateAllEmpty(String field, String fieldDescription) {
-        if (StringUtils.isAllEmpty(field)) {
-            throw new IllegalStateException(fieldDescription + " can not be empty");
+        if (StringUtils.isAllEmpty(user.getName())) {
+            throw new IllegalStateException("User name can not be empty");
         }
     }
-
 }

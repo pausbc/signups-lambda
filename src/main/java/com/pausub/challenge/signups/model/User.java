@@ -10,11 +10,11 @@ import java.util.Date;
 @Builder(toBuilder = true)
 @AllArgsConstructor
 @NoArgsConstructor
-@DynamoDBTable(tableName="User")
+@DynamoDBTable(tableName="Users")
 public class User {
 
     @DynamoDBHashKey()
-    private String id;
+    private long id;
     private String name;
     private Date createdAt;
 }

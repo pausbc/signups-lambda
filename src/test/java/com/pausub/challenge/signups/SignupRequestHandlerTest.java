@@ -1,6 +1,6 @@
 package com.pausub.challenge.signups;
 
-import com.pausub.challenge.signups.model.Greet;
+import com.pausub.challenge.signups.model.Greeting;
 import com.pausub.challenge.signups.model.User;
 import org.junit.jupiter.api.Test;
 
@@ -23,18 +23,18 @@ public class SignupRequestHandlerTest {
 
     @Test
     public void createGreetSuccess() {
-        User user = createUser("1589278470","Mark");
+        User user = createUser(1589278470,"Mark");
         List<User> users = createGreetUsers();
 
-        Greet expectedGreet = Greet.builder()
-                .receiver("1589278470")
+        Greeting expectedGreeting = Greeting.builder()
+                .receiver(1589278470)
                 .message("Hi Mark, welcome to komoot. Anna, Stephen and Lise also joined recently.")
                 .sender("pausub@gmail.com")
-                .recentUserIds(asList("627362498", "1093883245", "304390273"))
+                .recentUserIds(asList(627362498L, 1093883245L, 304390273L))
                 .build();
 
-        Greet actualGreet = handler.createGreet(user, users);
-        assertThat(actualGreet).isEqualTo(expectedGreet);
+        Greeting actualGreeting = handler.createGreet(user, users);
+        assertThat(actualGreeting).isEqualTo(expectedGreeting);
     }
 
     @Test
@@ -58,20 +58,20 @@ public class SignupRequestHandlerTest {
 
     @Test
     public void createGreetMessageNoRecentUsers() {
-        String message = handler.createGreetMessage(createUser("1589278470","Mark"), emptyList());
+        String message = handler.createGreetMessage(createUser(1589278470,"Mark"), emptyList());
         assertThat(message).isEqualTo("Hi Mark, welcome to komoot.");
     }
 
     @Test
     public void createGreetMessageSingleRecentUser() {
-        String message = handler.createGreetMessage(createUser("1589278470","Mark"), singletonList("Lise"));
+        String message = handler.createGreetMessage(createUser(1589278470,"Mark"), singletonList("Lise"));
         assertThat(message).isEqualTo("Hi Mark, welcome to komoot. Lise also joined recently.");
     }
 
     @Test
     public void createGreetMessage2RecentUsers() {
         String message = handler.createGreetMessage(
-                createUser("1589278470","Mark"),
+                createUser(1589278470,"Mark"),
                 asList("Karl", "Lise")
         );
         assertThat(message).isEqualTo("Hi Mark, welcome to komoot. Lise and Karl also joined recently.");
@@ -80,7 +80,7 @@ public class SignupRequestHandlerTest {
     @Test
     public void createGreetMessage4RecentUsers() {
         String message = handler.createGreetMessage(
-                createUser("1589278470","Mark"),
+                createUser(1589278470,"Mark"),
                 asList("Lise", "Karl", "Anna", "Stephen")
         );
         assertThat(message).isEqualTo("Hi Mark, welcome to komoot. Karl, Anna, Stephen and Lise also joined recently.");
@@ -88,36 +88,36 @@ public class SignupRequestHandlerTest {
 
     @Test
     public void createUpdatedUserPoolEmptyPool() {
-        assertThat(createUpdatedUserPool(createUser("1", "Erik"), emptyList())).hasSize(1);
+        assertThat(createUpdatedUserPool(createUser(1, "Erik"), emptyList())).hasSize(1);
     }
 
     @Test
     public void createUpdatedUserPoolSingleUser() {
-        List<User> pool = singletonList(createUser("1", "John"));
-        List<User> result = createUpdatedUserPool(createUser("2", "Erik"), pool);
+        List<User> pool = singletonList(createUser(1, "John"));
+        List<User> result = createUpdatedUserPool(createUser(2, "Erik"), pool);
         assertThat(result).hasSize(2);
     }
 
     @Test
     public void createUpdatedUserPoolRemoveOldest() {
-        User user = createUser("2", "John");
+        User user = createUser(2, "John");
 
         List<User> pool = asList(
-                createUser("627362498", "Lise"),
-                createUser("1093883245", "Anna"),
-                createOldUser("1")
+                createUser(627362498, "Lise"),
+                createUser(1093883245, "Anna"),
+                createOldUser()
         );
 
         List<User> result = createUpdatedUserPool(user, pool);
         assertThat(result).hasSize(3);
-        assertThat(result.stream().noneMatch(u -> u.getId().equals("1"))).isTrue();
+        assertThat(result.stream().noneMatch(u -> u.getId() == 1)).isTrue();
     }
 
     @Test
     public void createUpdatedUserPoolRemoveCurrentIfOldest() {
-        List<User> result = createUpdatedUserPool(createOldUser("1"), createGreetUsers());
+        List<User> result = createUpdatedUserPool(createOldUser(), createGreetUsers());
         assertThat(result).hasSize(3);
-        assertThat(result.stream().noneMatch(u -> u.getId().equals("1"))).isTrue();
+        assertThat(result.stream().noneMatch(u -> u.getId() == 1)).isTrue();
     }
 
     @Test
@@ -130,27 +130,27 @@ public class SignupRequestHandlerTest {
     }
 
     private List<User> createUserPool() {
-        return concat(createGreetUsers().stream(), of(createUser("304390274", "Stephen"))).collect(toList());
+        return concat(createGreetUsers().stream(), of(createUser(304390274, "Stephen"))).collect(toList());
     }
 
-    private User createOldUser(String id) {
+    private User createOldUser() {
         return User.builder()
                 .name("Uve")
                 .createdAt(Date.from(Instant.now().minusSeconds(10)))
-                .id(id)
+                .id(1)
                 .build();
     }
 
     // Unique users
     private List<User> createGreetUsers() {
         return asList(
-                createUser("627362498", "Lise"),
-                createUser("1093883245", "Anna"),
-                createUser("304390273", "Stephen")
+                createUser(627362498, "Lise"),
+                createUser(1093883245, "Anna"),
+                createUser(304390273, "Stephen")
         );
     }
 
-    private User createUser(String id, String name) {
+    private User createUser(long id, String name) {
         return User.builder()
                 .name(name)
                 .createdAt(new Date())
