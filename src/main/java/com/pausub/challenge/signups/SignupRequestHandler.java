@@ -96,7 +96,7 @@ public class SignupRequestHandler implements RequestHandler<SNSEvent, String> {
                 throw new RuntimeException(e.getMessage(), e);
             }
         }
-        throw new RuntimeException(String.format("Failed to send notification after %d retries", USERS_IN_GREET_COUNT));
+        throw new RuntimeException(String.format("Failed to send notification after %d retries", HTTP_REQUEST_RETRY_COUNT));
     }
 
     List<User> findUsersForGreet(String currentUserName, List<User> userPool, int limit) {
